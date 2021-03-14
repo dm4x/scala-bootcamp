@@ -2,17 +2,19 @@ package com.evolutiongaming.bootcamp.json
 
 import java.time.format.DateTimeFormatter
 import java.time.{LocalDate, ZonedDateTime}
-
 import cats.instances.either._
 import cats.instances.list._
 import cats.syntax.traverse._
 import io.circe
+import io.circe.Decoder
 import io.circe.parser._
 import io.circe.generic.JsonCodec
 import org.scalatest.EitherValues
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import scalaj.http.Http
+import cats.syntax.either._
+import io.circe.generic.extras.{Configuration, ConfiguredJsonCodec}
 
 import scala.io.Source
 import scala.util.Try
@@ -60,10 +62,24 @@ class HomeworkSpec extends AnyWordSpec with Matchers with EitherValues {
 }
 
 object HomeworkSpec {
-  @JsonCodec final case class TeamTotals(assists: String, fullTimeoutRemaining: String, plusMinus: String)
+  implicit val config: Configuration = Configuration.default.copy(transformMemberNames = {
+    case "fullTimeoutRemaining" => "full_timeout_remaining"
+    case other => other
+  })
+  @ConfiguredJsonCodec final case class TeamTotals(assists: String, fullTimeoutRemaining: String, plusMinus: String)
+
   @JsonCodec final case class TeamBoxScore(totals: TeamTotals)
+
   @JsonCodec final case class GameStats(hTeam: TeamBoxScore, vTeam: TeamBoxScore)
+
   @JsonCodec final case class PrevMatchup(gameDate: LocalDate, gameId: String)
+
+  val format = DateTimeFormatter.BASIC_ISO_DATE
+  implicit val decodeLocalDate: Decoder[LocalDate] = Decoder.decodeString.emap { date =>
+    Either.catchNonFatal(LocalDate.parse(date, format))
+      .leftMap(err => "LocalDate can't be parsed from " + date + " because of error:\n" + err.getMessage)
+  }
+
   @JsonCodec final case class BoxScore(
     basicGameData: Game,
     previousMatchup: PrevMatchup,
