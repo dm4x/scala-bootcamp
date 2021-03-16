@@ -1,5 +1,6 @@
 package com.evolutiongaming.bootcamp.typeclass
 
+import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.collection.mutable
 
@@ -34,7 +35,7 @@ object ImplicitsHomework {
 
     object syntax {
       implicit class GetSizeScoreOps[T: GetSizeScore](inner: T) {
-        def sizeScore: SizeScore = ??? //implement the syntax!
+        def sizeScore: SizeScore = implicitly[GetSizeScore[T]].apply(inner) //implement the syntax!
       }
     }
 
@@ -59,9 +60,19 @@ object ImplicitsHomework {
        */
       private val map = mutable.LinkedHashMap.empty[K, V]
 
-      def put(key: K, value: V): Unit = ???
+      private def currentSize: Int = map.foldLeft(0){case (acc, (key, v)) => acc + key.sizeScore + v.sizeScore }
 
-      def get(key: K): Option[V] = ???
+      @tailrec
+      def put(key: K, value: V): Unit = {
+        if (key.sizeScore + value.sizeScore + currentSize <= maxSizeScore) {
+          map.addOne(key, value)
+        } else {
+          map.remove(map.keys.head)
+          put(key, value)
+        }
+      }
+
+      def get(key: K): Option[V] = map.get(key).orElse(None)
     }
 
     /**
@@ -91,6 +102,13 @@ object ImplicitsHomework {
     object instances {
       import syntax._
 
+      val byteScore = 1
+      val charScore = 2
+      val intScore = 4
+      val longScore = 8
+      val headerScore = 12
+
+
       implicit val iterableOnceIterate: Iterate[Iterable] = new Iterate[Iterable] {
         override def iterator[T](f: Iterable[T]): Iterator[T] = f.iterator
       }
@@ -100,6 +118,18 @@ object ImplicitsHomework {
       }
       //Provide Iterate2 instances for Map and PackedMultiMap!
       //if the code doesn't compile while you think it should - sometimes full rebuild helps!
+
+      implicit val mapIterate: Iterate2[Map] = new Iterate2[Map] {
+        override def iterator1[T, S](f: Map[T, S]): Iterator[T] = f.keys.iterator
+
+        override def iterator2[T, S](f: Map[T, S]): Iterator[S] = f.values.iterator
+      }
+
+      implicit val packedMultiMap: Iterate2[PackedMultiMap] = new Iterate2[PackedMultiMap] {
+        override def iterator1[T, S](f: PackedMultiMap[T, S]): Iterator[T] = f.inner.iterator.map { case (key, _) => key }
+
+        override def iterator2[T, S](f: PackedMultiMap[T, S]): Iterator[S] = f.inner.iterator.map { case (_, value) => value }
+      }
 
       /*
       replace this big guy with proper implicit instances for types:
@@ -112,7 +142,45 @@ object ImplicitsHomework {
       If you struggle with writing generic instances for Iterate and Iterate2, start by writing instances for
       List and other collections and then replace those with generic instances.
        */
-      implicit def stubGetSizeScore[T]: GetSizeScore[T] = (_: T) => 42
+
+      implicit val byteSizeScore: GetSizeScore[Byte] = _ => byteScore
+      implicit val charSizeScore: GetSizeScore[Char] = _ => charScore
+      implicit val intSizeScore: GetSizeScore[Int] = _ => intScore
+      implicit val longSizeScore: GetSizeScore[Long] = _ => longScore
+      implicit val stringSizeScore: GetSizeScore[String] = string => headerScore + string.length * charScore
+
+      import com.evolutiongaming.bootcamp.typeclass.ImplicitsHomework.MyTwitter.{Twit, FbiNote}
+
+      implicit val twitSizeScore: GetSizeScore[Twit] = twit => {
+        headerScore +
+          twit.id.sizeScore +
+          twit.userId.sizeScore +
+          twit.attributes.sizeScore +
+          twit.fbiNotes.sizeScore +
+          twit.hashTags.sizeScore
+      }
+
+      implicit val fbiNoteSizeScore: GetSizeScore[FbiNote] = note => {
+        headerScore +
+          note.month.sizeScore +
+          note.favouriteChar.sizeScore +
+          note.watchedPewDiePieTimes.sizeScore
+      }
+
+      // 12 (our old friend object header) + sum of scores of all elements
+      implicit def iterateSizeScore[T, F[_]] (implicit collectionScore:GetSizeScore[T],
+                                              iter: Iterate[F]): GetSizeScore[F[T]] = collection => {
+        headerScore + iter.iterator(collection).map(collectionScore(_)).sum
+      }
+
+
+      // - score for any Map[K, V] is 12 + sum of scores of all keys + sum of scores of all values
+      implicit def iterable2SizeScore[K, V, F[_, _]] (implicit keyScore: GetSizeScore[K],
+                                                      valScore: GetSizeScore[V],
+                                                      iter: Iterate2[F]): GetSizeScore[F[K, V]] = collection => {
+        headerScore + iter.iterator1(collection).map(keyScore(_)).sum + iter.iterator2(collection).map(valScore(_)).sum
+      }
+
     }
   }
 
@@ -145,6 +213,16 @@ object ImplicitsHomework {
     /*
     Return an implementation based on MutableBoundedCache[Long, Twit]
      */
-    def createTwitCache(maxSizeScore: SizeScore): TwitCache = ???
+    def createTwitCache(maxSizeScore: SizeScore): TwitCache = {
+      import instances._
+
+      new TwitCache {
+        val cache = new MutableBoundedCache[Long, Twit](maxSizeScore)
+
+        override def put(twit: Twit): Unit = cache.put(twit.id, twit)
+
+        override def get(id: Long): Option[Twit] = cache.get(id)
+      }
+    }
   }
 }
