@@ -24,13 +24,19 @@ object For {
 
   class Task1(repo: Repository) {
     // find all friends for users passed
-    def friends(users: List[UserId]): Either[Error, List[UserId]] = ???
+    def friends(users: List[UserId]): Either[Error, List[UserId]] = {
+      users.traverse(id => repo.getFriends(id)).map(x => x.flatten)
+    }
   }
 
   // implement
   class Service(repo: Repository) {
 
-    def friendsOrders(userId: UserId): Either[Error, List[Item]] = ???
+    def friendsOrders(userId: UserId): Either[Error, List[Item]] = for {
+      friends <- repo.getFriends(userId)
+      orders <- friends.traverse(id => repo.getOrder(id))
+      items <- orders.traverse(id => repo.getItems(id))
+    } yield items.flatten
   }
 
 }
@@ -56,7 +62,11 @@ object MonadTransformers {
   // implement
   class Service(repo: Repository) {
 
-    def friendsOrders(userId: UserId): IO[Either[Error, List[Item]]] = ???
+    def friendsOrders(userId: UserId): IO[Either[Error, List[Item]]] = (for {
+      friends <- EitherT(repo.getFriends(userId))
+      orders <- friends.traverse(id => EitherT(repo.getOrder(id)))
+      items <- orders.traverse(id => EitherT(repo.getItems(id)))
+    } yield items.flatten).value
   }
 
 }
