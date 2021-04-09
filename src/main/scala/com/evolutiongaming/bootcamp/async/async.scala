@@ -30,18 +30,27 @@ object BasicFutures extends App {
   val completedFuture: Future[Int] = Future.successful(42) //doesn't schedule work
   completedFuture.foreach(println)
 
-  val failedFuture: Future[Int] = Future.failed(new RuntimeException("oh my")) //doesn't schedule work
-  failedFuture.failed.foreach(t => t.printStackTrace())
+//  val failedFuture: Future[Int] = Future.failed(new RuntimeException("oh my")) //doesn't schedule work
+//  failedFuture.failed.foreach(t => t.printStackTrace())
 
 
   val futureFromBlock: Future[String] = Future {
     //code block is immediately scheduled for execution on the implicit execution context
     //if you throw an exception inside the block, it is converted to a failed future case
     println("doing work!")
-    "work done!"
+    println("work done!")
+    "calculated once result "
   }
   futureFromBlock.onComplete {
-    case Success(value) => println(value)
+    case Success(value) => println(s"1 - $value")
+    case Failure(t)     => t.printStackTrace()
+  }
+  futureFromBlock.onComplete {
+    case Success(value) => println(s"2 - $value")
+    case Failure(t)     => t.printStackTrace()
+  }
+  futureFromBlock.onComplete {
+    case Success(value) => println(s"3 - $value")
     case Failure(t)     => t.printStackTrace()
   }
 }
@@ -61,7 +70,7 @@ object FutureFromPromise extends App {
     promise.future
   }
 
-  {
+
     import scala.concurrent.ExecutionContext.Implicits.global
 
     val future = Future {
@@ -69,7 +78,7 @@ object FutureFromPromise extends App {
     }
 
     asyncInc(future).foreach(println)
-  }
+
 }
 
 /*
@@ -85,7 +94,20 @@ object FutureFromPromise extends App {
   Add implicit args to the function if needed!
    */
 object Exercise1 extends App {
-  def firstCompleted[T](f1: Future[T], f2: Future[T])(implicit ec: ExecutionContext): Future[T] = ???
+
+  def firstCompleted[T](f1: Future[T], f2: Future[T])(implicit ec: ExecutionContext): Future[T] = {
+    val promise: Promise[T] = Promise()
+    f1.onComplete{
+      case Success(value) => promise.trySuccess(value)
+      case Failure(fail) => promise.tryFailure(fail)
+    }
+    f2.onComplete{
+      case Success(value) => promise.trySuccess(value)
+      case Failure(fail) => promise.tryFailure(fail)
+    }
+
+    promise.future
+  }
 
   {
     import scala.concurrent.ExecutionContext.Implicits.global
@@ -128,7 +150,14 @@ Implement sumAll using collection foldLeft and map + flatMap on Future's (or for
 If called on an empty collection, should return Future.successful(0).
  */
 object Exercise2 extends App {
-  def sumAll(futureValues: Seq[Future[Int]])(implicit ec: ExecutionContext): Future[Int] = ???
+  def sumAll(futureValues: Seq[Future[Int]])(implicit ec: ExecutionContext): Future[Int] = {
+    futureValues.foldLeft(Future.successful(0)){
+      (acc, future) => for {
+        value1 <- acc
+        value2 <- future
+      } yield value1 + value2
+    }
+  }
 
   {
     import scala.concurrent.ExecutionContext.Implicits.global
@@ -160,7 +189,7 @@ object FutureShenanigans {
 object SharedStateProblems extends App {
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  var counter: Int = 0
+  @volatile var counter: Int = 0
 
   val thread1 = Future {
     (1 to 1000).foreach(_ => counter += 1)

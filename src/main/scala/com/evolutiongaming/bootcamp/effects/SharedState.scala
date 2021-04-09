@@ -141,13 +141,23 @@ object ExerciseZero extends IOApp {
 
   class SimpleRef[A](ar: AtomicReference[A]) extends IOAtomicRef[A] {
 
-    override def get(): IO[A] = ???
+    override def get(): IO[A] = IO(ar.get())
 
-    override def set(a: A): IO[Unit] = ???
+    override def set(a: A): IO[Unit] = IO(ar.set(a))
 
-    override def update(f: A => A): IO[Unit] = ???
+    override def update(f: A => A): IO[Unit] = IO(f(ar.getAndUpdate(a => f(a))))
 
-    override def modify[B](f: A => (A, B)): IO[B] = ???
+    override def modify[B](f: A => (A, B)): IO[B] = IO.delay {
+      def run(): B = {
+        val oldValue = ar.get()
+        val (newValue, b) = f(oldValue)
+        if (ar.compareAndSet(oldValue, newValue))
+          b
+        else
+          run()
+      }
+      run()
+    }
   }
 
   /*
@@ -650,11 +660,11 @@ object MySemaphoreMVarExercise extends IOApp {
   }
 
   class MySemaphoreMVar[F[_] : Concurrent](mvar: MVar2[F, Unit]) extends MySemaphore[F] {
-    override def acquire: F[Unit] = ???
+    override def acquire: F[Unit] = mvar.take
 
-    override def release: F[Unit] = ???
+    override def release: F[Unit] = mvar.put()
 
-    override def withPermit[A](fa: F[A]): F[A] = ???
+    override def withPermit[A](fa: F[A]): F[A] = Concurrent[F].bracket(acquire)(_ => fa)(_ => release)
   }
 
   object MySemaphoreMVar {

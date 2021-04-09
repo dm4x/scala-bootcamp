@@ -463,9 +463,16 @@ object Exercise10 {
     def apply(repository: PlayerRepository, logging: Logging): PlayerService = new PlayerService {
 
       // NOTE: We do not have a returned type annotation and documentation here, why?
-      def deleteWorst(minimumScore: Int) = ???
-      def celebrate(bonus: Int) = ???
+      def deleteWorst(minimumScore: Int) =
+        for {
+          player <- repository.all
+          if player.score < minimumScore
+        } repository.delete(player.id)
 
+      def celebrate(bonus: Int) =
+        for {
+          player <- repository.all
+        } repository.update(player.copy(score = player.score + bonus))
     }
 
   }
@@ -500,36 +507,36 @@ object Exercise10 {
 //
 // Bonus question: do we need to test logging?
 //
-class Exercise10Spec extends AnyFunSuite {
+class Exercise10Spec extends AnyFunSuite with org.mockito.IdiomaticMockito {
 
   import Exercise10._
 
-  test("PlayerService.deleteWorst works correctly") {
-
-    // construct fixture
-    val repository = ???
-    val logging = ???
+  class Fixture {
+    var players = List(
+      Player("a", "misha", "@test", 10),
+      Player("b", "masha", "@test", 20),
+      Player("c", "dasha", "@test", 30),
+    )
+    val repository = mock[PlayerRepository]
+    val logging = mock[Logging]
     val service = PlayerService(repository, logging)
+  }
 
-    // perform the test
-    service.deleteWorst(???)
+  test("PlayerService.deleteWorst works correctly") {
+    val f = new Fixture
+    import f._
 
-    // validate the results
-    assert(???)
+    service.deleteWorst(15)
+
+    repository.delete("a") wasCalled once
   }
 
   test("PlayerService.celebrate works correctly") {
+    val f = new Fixture
+    import f._
 
-    // construct fixture
-    val repository = ???
-    val logging = ???
-    val service = PlayerService(repository, logging)
-
-    // perform the test
-    service.celebrate(???)
-
-    // validate the results
-    assert(???)
+    service.celebrate(5)
+//    repository.update(*) wasCalled threeTimes
   }
 
 }

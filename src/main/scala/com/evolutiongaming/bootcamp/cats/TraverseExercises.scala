@@ -52,7 +52,7 @@ object TraverseExercises extends App {
   val users2: List[User] = users.sequence.get
 
   val usersAsync: List[IO[Option[User]]] = ids.map(id => getUserAsync(id))
-  val usersAsync2: IO[List[User]] = ids.traverse(getUserAsync)
+//  val usersAsync2: IO[List[User]] = ids.traverse(getUserAsync)
 
   val usersFriendsAsync: List[IO[Option[List[UserId]]]] = ids.map(id => getUserAsync(id).map(_.map(_.friends)))
   val usersFriendsAsync2: IO[List[UserId]] = {

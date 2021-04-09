@@ -4,6 +4,7 @@ import cats._
 import cats.effect._
 import cats.syntax.all._
 
+import java.lang
 import java.util.concurrent.Executors
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -63,9 +64,24 @@ object ConsoleSimple {
 object Simple extends App {
   import ConsoleSimple._
 
-  putStr("What is your name: ")
-  val name = readStr()
-  putStr(s"Hello, $name!\n")
+  def getName: String = {
+    putStr("What is your name: ")
+    readStr() match {
+      case "" => getName
+      case name => name
+    }
+  }
+
+  def getAge: Int = readStr().toInt
+  def getAgeSafe: Int = try {
+    getAge
+  } catch {
+    case _: lang.Throwable => getAgeSafe
+  }
+
+  val name = getName
+  val age = getAge
+  putStr(s"Hello, $name of age $age!\n")
 }
 
 
@@ -93,9 +109,11 @@ object FutureApp extends App {
 
   def cache(user: User): Future[Unit] = Future(println(s"Caching ${user.email}"))
 
-  val app =
+  val app: Future[Unit] =
     create("test@evolution.com")
-      .flatMap(user => cache(user))
+      .flatMap(user => cache(user)).recoverWith {
+      case _: Throwable => app
+    }
 }
 
 
@@ -116,9 +134,10 @@ object ConsoleIO {
 object IOHelloWorld extends App {
   import ConsoleIO._
 
+  val getName = putStr("What is your name: ") *> readStr
+
   val app = for {
-    _    <- putStr("What is your name: ")
-    name <- readStr
+    name <- getName.iterateWhile(_.isEmpty)
     _    <- putStr(s"Hello, $name!")
   } yield ()
 
@@ -133,16 +152,20 @@ trait Console[F[_]] {
 
 // Exercise 1
 object Console {
-  def of[F[_]]: Console[F] = ???
+  def of[F[_]: Sync]: Console[F] = new Console[F]{
+    override def readStr: F[String] = Sync[F].delay(StdIn.readLine)
+    override def putStr(text: String): F[Unit] = Sync[F].delay(print(text))
+  }
 }
 
 object TFHelloWorld extends App {
-  def app[F[_]: Monad](console: Console[F]): F[Unit] = for {
-    _    <- console.putStr("What is your name: ")
-    name <- console.readStr
-    _    <- console.putStr(s"Hello, $name!")
-  } yield ()
-
+  def app[F[_]: Monad](console: Console[F]): F[Unit] = {
+    val getName = console.putStr("What is your name: ") *> console.readStr
+    for {
+      name <- getName.iterateWhile(_.isEmpty)
+      _ <- console.putStr(s"Hello, $name!")
+    } yield ()
+  }
   app[IO](Console.of[IO]).unsafeRunSync()
 }
 
@@ -156,13 +179,16 @@ object TFHelloWorld extends App {
 object ErrorsExample extends App {
 
   val readInt = ConsoleIO.readStr.map(_.toInt)
+    .handleError{
+      e: Throwable => 123
+    }
 
   readInt.foreverM.unsafeRunSync()
 }
 
 
 
-object ErrorsExercise {
+object ErrorsExercise extends App {
 
   sealed trait ValidationError extends Throwable with NoStackTrace
   case object InvalidAge  extends ValidationError
@@ -183,13 +209,18 @@ object ErrorsExercise {
   final case class Person(name: Name, age: Age)
 
   // Exercise 2
-  def readPerson[F[_]](console: Console[F]): F[Person] = {
-    val readName: F[Name] = ???
+  def readPerson[F[_]: MonadError[*[_], Throwable]](console: Console[F]): F[Person] = {
+    def readName: F[Name] = (console.putStr("Enter name: ") *> console.readStr).flatMap { name =>
+      Name.from(name).liftTo[F].handleErrorWith(_ => readName)
+    }
 
-    val readAge: F[Age] = ???
+    def readAge: F[Age] = (console.putStr("Enter age: ") *> console.readStr)
+      .flatMap (string => Try(string.toInt).liftTo[F])
+      .flatMap { age =>
+      Age.from(age).liftTo[F]
+    }.handleErrorWith(_ => readAge)
 
-//    (readName, readAge).mapN(Person)
-    ???
+    (readName, readAge).mapN(Person)
   }
 
   readPerson[IO](Console.of[IO]).unsafeRunSync()
