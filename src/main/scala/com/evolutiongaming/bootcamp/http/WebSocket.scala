@@ -1,16 +1,21 @@
 package com.evolutiongaming.bootcamp.http
 
-import cats.effect.{ExitCode, IO, IOApp}
-import fs2.Pipe
-import fs2.concurrent.Queue
+import cats.effect.{ExitCode, IO, IOApp, Resource}
+import cats.syntax.all._
+import fs2.{Pipe, Stream}
+import fs2.concurrent.{Queue, Topic}
 import org.http4s._
+import org.http4s.client.jdkhttpclient.{JdkWSClient, WSConnectionHighLevel, WSFrame, WSRequest}
 import org.http4s.dsl.io._
 import org.http4s.implicits._
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.server.websocket.WebSocketBuilder
 import org.http4s.websocket.WebSocketFrame
 
+import java.net.http.HttpClient
 import scala.concurrent.ExecutionContext
+import cats.effect.Clock
+import java.time.Instant
 
 object WebSocketIntroduction {
 
@@ -41,7 +46,7 @@ object WebSocketServer extends IOApp {
 
   // Let's build a WebSocket server using Http4s.
 
-  private val webSocketRoute = HttpRoutes.of[IO] {
+  private val echoRoute = HttpRoutes.of[IO] {
 
     // websocat "ws://localhost:9002/echo"
     case GET -> Root / "echo" =>
@@ -65,42 +70,70 @@ object WebSocketServer extends IOApp {
           send = queue.dequeue.through(echoPipe),
         )
       } yield response
+
+      // Exercise 1. Send current time to user when he asks it.
+      // Note: getting current time is a side effect.
+
+      // Exercise 2. Notify user periodically how long he is connected.
+      // Tip: you can merge streams via `merge` operator.
   }
 
+  // Topics provide an implementation of the publish-subscribe pattern with an arbitrary number of
+  // publishers and an arbitrary number of subscribers.
+  private def chatRoute(chatTopic: Topic[IO, String]) = HttpRoutes.of[IO] {
+
+    // websocat "ws://localhost:9002/chat"
+    case GET -> Root / "chat" =>
+      WebSocketBuilder[IO].build(
+        // Sink, where the incoming WebSocket messages from the client are pushed to.
+        receive = chatTopic.publish.compose[Stream[IO, WebSocketFrame]](_.collect {
+          case WebSocketFrame.Text(message, _) => message
+        }),
+        // Outgoing stream of WebSocket messages to send to the client.
+        send = chatTopic.subscribe(10).map(WebSocketFrame.Text(_)),
+      )
+
+      // Exercise 3. Use first message from a user as his username and prepend it to each his message.
+      // Tip: to do this you will likely need fs2.Pull.
+  }
+
+  private def httpApp(chatTopic: Topic[IO, String]) = {
+    echoRoute <+> chatRoute(chatTopic)
+  }.orNotFound
+
   override def run(args: List[String]): IO[ExitCode] =
-    BlazeServerBuilder[IO](ExecutionContext.global)
+    for {
+      chatTopic <- Topic[IO, String]("Hello!")
+      _ <- BlazeServerBuilder[IO](ExecutionContext.global)
       .bindHttp(port = 9002, host = "localhost")
-      .withHttpApp(webSocketRoute.orNotFound)
+      .withHttpApp(httpApp(chatTopic))
       .serve
       .compile
       .drain
-      .as(ExitCode.Success)
+    } yield ExitCode.Success
 }
 
 // Regrettably, Http4s does not yet provide a WebSocket client (contributions are welcome!):
 // https://github.com/http4s/http4s/issues/330
+// But there is an Http4s wrapper for builtin JDK HTTP client.
+object WebSocketClient extends IOApp {
+  private val uri = uri"ws://localhost:9002/echo"
 
-// Homework. Place the solution under `http` package in your homework repository.
-//
-// Write a server and a client that play a number guessing game together.
-//
-// Communication flow should be as follows:
-// 1. The client asks the server to start a new game by providing the minimum and the maximum number that can
-//    be guessed, as well as the maximum number of attempts.
-// 2. The server comes up with some random number within the provided range.
-// 3. The client starts guessing the number. Upon each attempt, the server evaluates the guess and responds to
-//    the client, whether the current number is lower, greater or equal to the guessed one.
-// 4. The game ends when the number is guessed or there are no more attempts left. At this point the client
-//    should terminate, while the server may continue running forever.
-// 5. The server should support playing many separate games (with different clients) at the same time.
-//
-// Use HTTP or WebSocket for communication. The exact protocol and message format to use is not specified and
-// should be designed while working on the task.
-object GuessServer {
-  // ...
-}
-object GuessClient {
-  // ...
+  private def printLine(string: String = ""): IO[Unit] = IO(println(string))
+
+  override def run(args: List[String]): IO[ExitCode] = {
+    val clientResource = Resource.eval(IO(HttpClient.newHttpClient()))
+      .flatMap(JdkWSClient[IO](_).connectHighLevel(WSRequest(uri)))
+
+    clientResource.use { client =>
+      for {
+        _ <- client.send(WSFrame.Text("hello"))
+        _ <- client.receiveStream.collectFirst {
+          case WSFrame.Text(s, _) => s
+        }.compile.string >>= printLine
+      } yield ExitCode.Success
+    }
+  }
 }
 
 // Attributions and useful links:
